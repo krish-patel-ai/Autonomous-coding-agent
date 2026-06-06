@@ -14,7 +14,7 @@
 
 ## 🚀 Live Demo
 
-**[▶ Try it on Hugging Face Spaces](https://huggingface.co/spaces/krishpatel/autonomous-coding-agent)**
+**[▶ Try it on Hugging Face Spaces](https://huggingface.co/spaces/Krishp1/Autonomous-Coding-Agent)**
 
 ---
 
