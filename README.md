@@ -55,7 +55,7 @@
 | Memory backend | ChromaDB vector similarity search |
 | LLM | Llama 3.1 8B Instant via Groq |
 | Avg pipeline runtime | ~20–40 seconds |
-| Lines of code | ~600 across 5 files |
+
 
 ---
 
