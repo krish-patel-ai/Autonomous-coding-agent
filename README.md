@@ -322,7 +322,7 @@ One `retries` counter shared across all nodes caused security/complexity failure
 ## 👨‍💻 Author
 
 **Krish Patel** — AI Engineer  
-[GitHub](https://github.com/krish-patel-ai) ·[LinkedIn] (https://www.linkedin.com/in/krish-patel-4951713b3/) · [Live Demo](https://huggingface.co/spaces/krishpatel/autonomous-coding-agent)
+[GitHub](https://github.com/krish-patel-ai) ·[LinkedIn](https://www.linkedin.com/in/krish-patel-4951713b3/) · [Live Demo](https://huggingface.co/spaces/krishpatel/autonomous-coding-agent)
 
 ---
 
