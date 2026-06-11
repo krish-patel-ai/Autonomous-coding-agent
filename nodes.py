@@ -236,6 +236,7 @@ CODE:
 Rules:
 - Copy function definitions inline
 - Use: from hypothesis import given, settings, strategies as st
+- Add @settings(max_examples=500) decorator on every text function
 - DO NOT use unittest or sys anywhere
 - Call test functions directly at the bottom
 - Keep to 2 simple property tests only
