@@ -14,7 +14,7 @@ import chromadb
 from state import State
 
 # ── LLM ──────────────────────────────────
-llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
 
 # ── CHROMADB ─────────────────────────────
 chroma_client     = chromadb.Client()
