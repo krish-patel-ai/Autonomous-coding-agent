@@ -1,3 +1,4 @@
+
 # nodes.py — All 13 nodes for Autonomous Python Coding Agent
 
 import os
@@ -6,6 +7,7 @@ import subprocess
 import re
 import hashlib
 import importlib.util
+import tempfile
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -30,7 +32,6 @@ def planner(state: State):
         HumanMessage(content=f"""
 Break this coding task into clear steps:
 Task: {state['task']}
-
 Reply with:
 1. What the function should do
 2. Input and output format
@@ -63,25 +64,19 @@ Write clean working Python code WITH type hints on every function.
 Return ONLY the code — no explanation, no markdown, no backticks."""),
         HumanMessage(content=f"""
 Task: {state['task']}
-
 Plan to follow:
 {state['plan']}
-
 Previous error (fix this):
 {state['error'] if state['error'] else 'No errors yet — write fresh code'}
-
 Reflection notes:
 {state.get('reflection_notes', '') or 'None'}
-
 Past fixes from memory:
 {past_fixes if past_fixes else 'No past fixes available'}
-
 Rules:
 - Type hints on ALL functions
 - Docstring on every function
 - Keep it simple and readable
 - MUST include demo calls inside: if __name__ == '__main__': that print results
-
 Write complete working Python code only:
 """)
     ])
@@ -107,18 +102,43 @@ def ast_validator(state: State):
         print(f"❌ Syntax error: {e}")
         return {"ast_valid": False, "error": f"SyntaxError at line {e.lineno}: {e.msg}"}
 
+    # Hard-fail on hallucinated imports: catching this here is cheaper than
+    # letting it slide through to the Tester, where it would just crash with
+    # ModuleNotFoundError anyway and burn a Tester retry instead of an AST one.
+    hallucinated_imports = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 base = alias.name.split(".")[0]
-                if importlib.util.find_spec(base) is None:
-                    print(f"⚠️ Possibly hallucinated import: {base}")
+                try:
+                    found = importlib.util.find_spec(base) is not None
+                except (ImportError, ValueError, ModuleNotFoundError):
+                    found = False
+                if not found:
+                    hallucinated_imports.append(base)
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 base = node.module.split(".")[0]
-                if importlib.util.find_spec(base) is None:
-                    print(f"⚠️ Possibly hallucinated import: {base}")
+                try:
+                    found = importlib.util.find_spec(base) is not None
+                except (ImportError, ValueError, ModuleNotFoundError):
+                    found = False
+                if not found:
+                    hallucinated_imports.append(base)
 
+    if hallucinated_imports:
+        unknown = list(set(hallucinated_imports))
+        print(f"❌ Hallucinated/unavailable imports: {unknown}")
+        return {
+            "ast_valid": False,
+            "error": f"Unknown or unavailable imports: {unknown}. "
+                     f"Rewrite using only the Python standard library or already-imported packages."
+        }
+
+    # Missing return type hints stay a soft warning, not a hard failure.
+    # Escalating this to a blocker would burn one of only 3 AST retries on a
+    # style nitpick, and if AST fails 3 times the pipeline ends early with
+    # NO code shown to the user at all — far worse than a missing "-> int".
     missing = [n.name for n in ast.walk(tree)
                if isinstance(n, ast.FunctionDef) and not n.returns and n.name != "__init__"]
     if missing:
@@ -139,18 +159,15 @@ def test_generator(state: State):
 Return ONLY runnable Python test code — no markdown, no backticks."""),
         HumanMessage(content=f"""
 Generate test cases for this code:
-
 TASK: {state['task']}
 CODE:
 {code}
-
 Rules:
 - Copy ALL function definitions inline — do NOT import from files
 - Cover: normal cases, edge cases, large input
 - Call each test function at the bottom to run them
 - Do NOT use unittest or sys — just plain assert statements
 - Print "All tests passed!" at the end if successful
-
 Return ONLY runnable Python code:
 """)
     ])
@@ -200,10 +217,16 @@ def tester(state: State):
                 except Exception as e:
                     test_output = f"Test run error: {e}"
 
+            # Promote whichever version actually passed into "code" so every
+            # downstream node (hypothesis/benchmark/security/complexity/reviewer)
+            # keeps working on the tested version instead of silently
+            # falling back to the pre-fix original once fixed_code is cleared.
+            working_code = code
             return {
                 "test_result": result.stdout + "\n" + test_output,
                 "error": "",
                 "passed": True,
+                "code": working_code,
                 "fixed_code": ""
             }
         else:
@@ -232,14 +255,12 @@ Write Hypothesis property tests for this code:
 TASK: {state['task']}
 CODE:
 {code}
-
 Rules:
 - Copy function definitions inline
 - Use: from hypothesis import given, settings, strategies as st
 - DO NOT use unittest or sys anywhere
 - Call test functions directly at the bottom
 - Keep to 2 simple property tests only
-
 Return ONLY complete runnable Python code:
 """)
         ])
@@ -275,31 +296,48 @@ Return ONLY complete runnable Python code:
 def performance_benchmarker(state: State):
     print("\n⚡ Benchmarking performance...")
     code = state["fixed_code"] if state["fixed_code"] else state["code"]
-    clean_code = code.replace("'", "")
 
-    benchmark_code = (
-        code + "\n\n"
-        "import timeit as _t, ast as _a\n"
-        "_tree = _a.parse('''" + clean_code + "''')\n"
-        "_fns = [n.name for n in _a.walk(_tree) "
-        "if isinstance(n, _a.FunctionDef) and not n.name.startswith('_')]\n"
-        "if _fns:\n"
-        "    _f = _fns[0]\n"
-        "    _ran = False\n"
-        "    for _call in [_f+'(100)', _f+'(\"hello\")', _f+'([1,2,3,4,5])', _f+'(\"racecar\")', _f+'(10)']:\n"
-        "        try:\n"
-        "            _ms = _t.timeit(_call, globals=globals(), number=1000)*1000\n"
-        "            print('BENCHMARK:'+str(round(_ms,2))+'ms')\n"
-        "            _ran = True\n"
-        "            break\n"
-        "        except: continue\n"
-        "    if not _ran: print('BENCHMARK:skipped')\n"
-        "else: print('BENCHMARK:skipped')\n"
-    )
-
+    # Find the target function via ast in-process — no need to re-parse
+    # inside the subprocess, so no string-embedding/quote-stripping needed.
     try:
+        tree = ast.parse(code)
+        fn_names = [n.name for n in ast.walk(tree)
+                    if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")]
+    except SyntaxError:
+        fn_names = []
+
+    if not fn_names:
+        print("⚡ No benchmarkable function found — skipped")
+        return {"benchmark_ms": 0.0}
+
+    fn_name = fn_names[0]
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(code)
+            tmp.write("\n\n")
+            tmp.write(
+                "import timeit as _t\n"
+                f"_f = {fn_name}\n"
+                "_ran = False\n"
+                "for _call in [lambda: _f(100), lambda: _f('hello'), "
+                "lambda: _f([1,2,3,4,5]), lambda: _f('racecar'), lambda: _f(10)]:\n"
+                "    try:\n"
+                "        _ms = _t.timeit(_call, number=1000) * 1000\n"
+                "        print('BENCHMARK:' + str(round(_ms, 2)) + 'ms')\n"
+                "        _ran = True\n"
+                "        break\n"
+                "    except Exception:\n"
+                "        continue\n"
+                "if not _ran:\n"
+                "    print('BENCHMARK:skipped')\n"
+            )
+            tmp_path = tmp.name
+
         result = subprocess.run(
-            ["python", "-c", benchmark_code],
+            ["python", tmp_path],
             capture_output=True, text=True, timeout=20
         )
         output = result.stdout + result.stderr
@@ -318,6 +356,9 @@ def performance_benchmarker(state: State):
     except Exception as e:
         print(f"⚠️ Benchmark error: {e}")
         return {"benchmark_ms": 0.0}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 # ─────────────────────────────────────────
 # NODE 8 — DEBUGGER
@@ -325,16 +366,18 @@ def performance_benchmarker(state: State):
 def debugger(state: State):
     print(f"\n🔧 Debugger fixing (attempt {state['retries']+1})...")
 
+    # Fix on top of the most recent attempt (fixed_code), not the stale
+    # original — otherwise each retry throws away the previous retry's work.
+    base_code = state["fixed_code"] if state["fixed_code"] else state["code"]
+
     response = llm.invoke([
         SystemMessage(content="""You are a Python debugger.
 Fix the exact error. Return ONLY fixed code — no markdown, no backticks."""),
         HumanMessage(content=f"""
 CODE:
-{state['code']}
-
+{base_code}
 ERROR:
 {state['error']}
-
 Return complete fixed Python code only:
 """)
     ])
@@ -361,7 +404,9 @@ Return complete fixed Python code only:
 # ─────────────────────────────────────────
 def security_auditor(state: State):
     print("\n🔒 Security check...")
-    code = state["final_code"] if state["final_code"] else state["code"]
+    # final_code isn't set until the reviewer node runs, which is *after*
+    # this node in the graph — referencing it here was always a no-op.
+    code = state["fixed_code"] if state["fixed_code"] else state["code"]
 
     dangerous = [
         ("eval(",        "Code execution via eval"),
@@ -391,7 +436,7 @@ def security_auditor(state: State):
 # ─────────────────────────────────────────
 def complexity_judge(state: State):
     print("\n📊 Complexity check...")
-    code  = state["final_code"] if state["final_code"] else state["code"]
+    code  = state["fixed_code"] if state["fixed_code"] else state["code"]
     lines = code.split("\n")
     issues = []
 
@@ -430,7 +475,7 @@ def complexity_judge(state: State):
 # ─────────────────────────────────────────
 def self_reflection(state: State):
     print("\n🪞 Self Reflection...")
-    code = state["final_code"] if state["final_code"] else state["code"]
+    code = state["fixed_code"] if state["fixed_code"] else state["code"]
 
     response = llm.invoke([
         SystemMessage(content="""You are a senior Python engineer.
@@ -469,7 +514,8 @@ NOTES: <one sentence>"""),
             "reflection_ok":    False,
             "reflection_notes": f"Issues: {issues_text}. {notes}",
             "confidence_score": confidence,
-            "error": f"Reflection failed ({confidence}/10): {issues_text}"
+            "error": f"Reflection failed ({confidence}/10): {issues_text}",
+            "reflection_retries": state.get("reflection_retries", 0) + 1
         }
 
     print(f"✅ Reflection approved ({confidence}/10)")
@@ -489,10 +535,8 @@ def reviewer(state: State):
     response = llm.invoke([
         SystemMessage(content="""You are a senior Python developer and teacher.
 Do TWO things and return in EXACTLY this format:
-
 FINAL_CODE:
 <complete polished code with docstrings and type hints>
-
 EXPLANATION:
 <simple explanation covering: what it does, how it works, time complexity, example usage>
 """),
@@ -522,10 +566,6 @@ EXPLANATION:
         "explanation": explanation,
         "review":      "Polished and explained"
     }
-
-# ─────────────────────────────────────────
-# NODE 13 — EXPLAINER (passthrough)
-# ─────────────────────────────────────────
 # ─────────────────────────────────────────
 # NODE 13 — EXPLAINER (passthrough)
 # ─────────────────────────────────────────

@@ -1,7 +1,25 @@
+
 # main.py — Graph builder for Autonomous Python Coding Agent
 
 import os
-GROQ_API_KEY=os.getenv("GROQ_API_KEY")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # reads .env in the current working directory
+except ImportError:
+    raise RuntimeError(
+        "python-dotenv is not installed but a .env file is expected. "
+        "Run `pip install python-dotenv` then try again."
+    )
+
+_groq_key = os.environ.get("GROQ_API_KEY")
+if not _groq_key:
+    raise RuntimeError(
+        "GROQ_API_KEY is not set. Add GROQ_API_KEY=your_key to your .env file "
+        "(in the same folder as main.py), or `export GROQ_API_KEY=your_key` "
+        "before starting the app."
+    )
+os.environ["GROQ_API_KEY"] = _groq_key
 
 from langgraph.graph import StateGraph, END
 
@@ -84,6 +102,7 @@ def get_initial_state(task: str) -> dict:
         "retries":            0,
         "security_retries":   0,
         "complexity_retries": 0,
+        "reflection_retries": 0,
         "passed":             False,
         "is_secure":          False,
         "is_simple":          False,

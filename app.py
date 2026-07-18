@@ -92,6 +92,7 @@ def initial_state(task):
         "retries":            0,
         "security_retries":   0,
         "complexity_retries": 0,
+        "reflection_retries": 0,
         "passed":             False,
         "is_secure":          False,
         "is_simple":          False,
@@ -269,3 +270,4 @@ st.markdown(
     "<a href='https://github.com' style='color:#00cc88'>GitHub</a></center>",
     unsafe_allow_html=True
 )
+
