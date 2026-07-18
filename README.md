@@ -49,7 +49,7 @@
 | Verification layers | 5 (AST → Tests → Hypothesis → Security → Complexity) |
 | Max retries (debugger) | 3 |
 | Max retries (security, complexity) | 2 each — independent counters |
-| Hypothesis test cases | 500+ random inputs per run |
+| Hypothesis test cases | 100+ random inputs per run |
 | Benchmark iterations | 1,000 runs |
 | Performance threshold | < 5ms per call |
 | Memory backend | ChromaDB vector similarity search |
