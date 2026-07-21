@@ -494,19 +494,30 @@ NOTES: <one sentence>"""),
             key, _, val = line.partition(":")
             lines_map[key.strip().upper()] = val.strip()
 
-    try:
-        confidence = int(re.search(r'\d+', lines_map.get("CONFIDENCE", "7")).group())
-    except Exception:
-        confidence = 7
+    required = {"CONFIDENCE", "APPROVED", "ISSUES", "NOTES"}
+    if not required.issubset(lines_map):
+        missing = sorted(required - set(lines_map.keys()))
+        print(f"❌ Reflection response missing fields: {missing}")
+        return {
+            "reflection_ok": False,
+            "reflection_notes": "Reflection response was incomplete.",
+            "confidence_score": 0,
+            "error": f"Malformed reflection response. Missing: {', '.join(missing)}",
+            "reflection_retries": state.get("reflection_retries", 0) + 1,
+        }
 
     try:
-        approved = "YES" in lines_map.get("APPROVED", "YES").upper()
+        confidence_match = re.search(r"\d+", lines_map["CONFIDENCE"])
+        confidence = int(confidence_match.group()) if confidence_match else 0
     except Exception:
-        approved = True
+        confidence = 0
 
-    issues_text = lines_map.get("ISSUES", "NONE")
-    notes       = lines_map.get("NOTES", "Looks good")
-    has_issues  = issues_text.upper() not in ("NONE", "") and bool(issues_text.strip())
+    approved = lines_map["APPROVED"].strip().upper() == "YES"
+
+    issues_text = lines_map["ISSUES"].strip()
+    notes = lines_map["NOTES"].strip()
+
+    has_issues = bool(issues_text) and issues_text.upper() != "NONE"
 
     if not approved or (has_issues and confidence < 7):
         print(f"❌ Reflection: confidence {confidence}/10")
